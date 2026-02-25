@@ -458,4 +458,9 @@ export type ToolsConfig = {
       deny?: string[];
     };
   };
+  /** Network egress policy configuration. */
+  egress?: {
+    /** Globally allowed domains for curl/wget access. Also set via ALLOWED_DOMAINS env var. */
+    allowedDomains?: string[];
+  };
 };

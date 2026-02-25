@@ -572,6 +572,43 @@ function buildChatCommands(): ChatCommandDefinition[] {
         },
       ],
     }),
+    defineChatCommand({
+      key: "approve-domain",
+      nativeName: "approve_domain",
+      description: "Approve a domain for network access.",
+      textAlias: "/approve-domain",
+      category: "management",
+      args: [
+        {
+          name: "domain",
+          description: "Domain to approve (e.g. api.example.com)",
+          type: "string",
+          required: true,
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "revoke-domain",
+      nativeName: "revoke_domain",
+      description: "Revoke a domain from network access.",
+      textAlias: "/revoke-domain",
+      category: "management",
+      args: [
+        {
+          name: "domain",
+          description: "Domain to revoke",
+          type: "string",
+          required: true,
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "domains",
+      nativeName: "domains",
+      description: "List allowed network domains.",
+      textAlias: "/domains",
+      category: "management",
+    }),
     ...listChannelDocks()
       .filter((dock) => dock.capabilities.nativeCommands)
       .map((dock) => defineDockCommand(dock)),

@@ -28,7 +28,13 @@ type ParsedApproveCommand =
 
 function parseApproveCommand(raw: string): ParsedApproveCommand | null {
   const trimmed = raw.trim();
-  if (!trimmed.toLowerCase().startsWith(COMMAND)) {
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith(COMMAND)) {
+    return null;
+  }
+  // Ensure we don't match longer commands like /approve-domain
+  const charAfter = lower[COMMAND.length];
+  if (charAfter !== undefined && charAfter !== " " && charAfter !== "\t") {
     return null;
   }
   const rest = trimmed.slice(COMMAND.length).trim();

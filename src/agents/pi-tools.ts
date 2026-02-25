@@ -109,6 +109,35 @@ function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
   };
 }
 
+/**
+ * Resolve the global domain allowlist for network egress policy.
+ * Merges config `tools.egress.allowedDomains` with the `ALLOWED_DOMAINS` env var.
+ */
+function resolveEgressAllowedDomains(cfg?: OpenClawConfig): string[] {
+  const configDomains = cfg?.tools?.egress?.allowedDomains ?? [];
+  const envRaw = process.env.ALLOWED_DOMAINS?.trim();
+  const envDomains = envRaw
+    ? envRaw
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean)
+    : [];
+  const merged = new Set<string>();
+  for (const d of configDomains) {
+    const trimmed = d.trim().toLowerCase();
+    if (trimmed) {
+      merged.add(trimmed);
+    }
+  }
+  for (const d of envDomains) {
+    const trimmed = d.trim().toLowerCase();
+    if (trimmed) {
+      merged.add(trimmed);
+    }
+  }
+  return [...merged];
+}
+
 export const __testing = {
   cleanToolSchemaForGemini,
   normalizeToolParams,
@@ -237,6 +266,7 @@ export function createOpenClawCodingTools(options?: {
     subagentPolicy,
   ]);
   const execConfig = resolveExecConfig({ cfg: options?.config, agentId });
+  const egressAllowedDomains = resolveEgressAllowedDomains(options?.config);
   const sandboxRoot = sandbox?.workspaceDir;
   const sandboxFsBridge = sandbox?.fsBridge;
   const allowWorkspaceWrites = sandbox?.workspaceAccess !== "ro";
@@ -309,6 +339,7 @@ export function createOpenClawCodingTools(options?: {
     approvalRunningNoticeMs:
       options?.exec?.approvalRunningNoticeMs ?? execConfig.approvalRunningNoticeMs,
     notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
+    egressAllowedDomains,
     sandbox: sandbox
       ? {
           containerName: sandbox.containerName,

@@ -560,6 +560,12 @@ export const ToolsSchema = z
       })
       .strict()
       .optional(),
+    egress: z
+      .object({
+        allowedDomains: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

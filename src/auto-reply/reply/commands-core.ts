@@ -4,6 +4,7 @@ import type {
   CommandHandlerResult,
   HandleCommandsParams,
 } from "./commands-types.js";
+import { clearSessionDomains } from "../../agents/egress.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -14,6 +15,7 @@ import { handleApproveCommand } from "./commands-approve.js";
 import { handleBashCommand } from "./commands-bash.js";
 import { handleCompactCommand } from "./commands-compact.js";
 import { handleConfigCommand, handleDebugCommand } from "./commands-config.js";
+import { handleEgressCommand } from "./commands-egress.js";
 import {
   handleCommandsListCommand,
   handleContextCommand,
@@ -53,6 +55,7 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleStatusCommand,
       handleAllowlistCommand,
       handleApproveCommand,
+      handleEgressCommand,
       handleContextCommand,
       handleWhoamiCommand,
       handleSubagentsCommand,
@@ -71,6 +74,11 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       `Ignoring /reset from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
     );
     return { shouldContinue: false };
+  }
+
+  // Clear per-session egress domains on reset/new
+  if (resetRequested && params.command.isAuthorizedSender) {
+    clearSessionDomains(params.sessionKey ?? "");
   }
 
   // Trigger internal hook for reset/new commands

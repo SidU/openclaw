@@ -56,6 +56,7 @@ import {
   resolveWorkdir,
   truncateMiddle,
 } from "./bash-tools.shared.js";
+import { formatNetworkBlockedError, validateNetworkAccess } from "./egress.js";
 import { callGatewayTool } from "./tools/gateway.js";
 import { listNodes, resolveNodeIdFromList } from "./tools/nodes-utils.js";
 
@@ -78,6 +79,8 @@ export type ExecToolDefaults = {
   messageProvider?: string;
   notifyOnExit?: boolean;
   cwd?: string;
+  /** Global domain allowlist for network egress policy. */
+  egressAllowedDomains?: string[];
 };
 
 export type { BashSandboxConfig } from "./bash-tools.shared.js";
@@ -165,6 +168,18 @@ export function createExecTool(
 
       if (!params.command) {
         throw new Error("Provide a command to start.");
+      }
+
+      // Network egress policy: validate domain access for curl/wget, blanket-block ssh/scp/nc.
+      const egressSessionKey = defaults?.sessionKey ?? "";
+      const egressGlobalDomains = defaults?.egressAllowedDomains ?? [];
+      const egressResult = validateNetworkAccess(
+        params.command,
+        egressSessionKey,
+        egressGlobalDomains,
+      );
+      if (!egressResult.ok) {
+        throw new Error(formatNetworkBlockedError(egressResult));
       }
 
       const maxOutput = DEFAULT_MAX_OUTPUT;
