@@ -1,4 +1,4 @@
-import type { ChannelMessageActionName, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
 import {
   buildBaseChannelStatusSummary,
   buildChannelConfigSchema,
@@ -9,6 +9,7 @@ import {
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
 } from "openclaw/plugin-sdk";
+import { handleMSTeamsMessageAction, listMSTeamsActions } from "./actions.js";
 import { listMSTeamsDirectoryGroupsLive, listMSTeamsDirectoryPeersLive } from "./directory-live.js";
 import { msteamsOnboardingAdapter } from "./onboarding.js";
 import { msteamsOutbound } from "./outbound.js";
@@ -366,15 +367,7 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
     },
   },
   actions: {
-    listActions: ({ cfg }) => {
-      const enabled =
-        cfg.channels?.msteams?.enabled !== false &&
-        Boolean(resolveMSTeamsCredentials(cfg.channels?.msteams));
-      if (!enabled) {
-        return [];
-      }
-      return ["poll"] satisfies ChannelMessageActionName[];
-    },
+    listActions: ({ cfg }) => listMSTeamsActions(cfg),
     supportsCards: ({ cfg }) => {
       return (
         cfg.channels?.msteams?.enabled !== false &&
@@ -418,8 +411,8 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount> = {
           details: { ok: true, channel: "msteams", messageId: result.messageId },
         };
       }
-      // Return null to fall through to default handler
-      return null as never;
+      // Dispatch to new action handler for non-card actions
+      return await handleMSTeamsMessageAction(ctx);
     },
   },
   outbound: msteamsOutbound,

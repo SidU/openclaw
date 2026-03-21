@@ -1099,6 +1099,15 @@ export const MSTeamsConfigSchema = z
     sharePointSiteId: z.string().optional(),
     heartbeat: ChannelHeartbeatVisibilitySchema,
     responsePrefix: z.string().optional(),
+    actions: z
+      .object({
+        messages: z.boolean().optional(),
+        memberInfo: z.boolean().optional(),
+        channelInfo: z.boolean().optional(),
+        threads: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

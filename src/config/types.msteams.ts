@@ -42,6 +42,18 @@ export type MSTeamsTeamConfig = {
   channels?: Record<string, MSTeamsChannelConfig>;
 };
 
+/** Action gates for MS Teams message actions. */
+export type MSTeamsActionConfig = {
+  /** Enable edit/delete message actions. Default: true. */
+  messages?: boolean;
+  /** Enable member-info action. Default: true. */
+  memberInfo?: boolean;
+  /** Enable channel-list/channel-info actions. Default: true. */
+  channelInfo?: boolean;
+  /** Enable reply (thread reply) action. Default: true. */
+  threads?: boolean;
+};
+
 export type MSTeamsConfig = {
   /** If false, do not start the MS Teams provider. Default: true. */
   enabled?: boolean;
@@ -115,4 +127,6 @@ export type MSTeamsConfig = {
   heartbeat?: ChannelHeartbeatVisibilityConfig;
   /** Outbound response prefix override for this channel/account. */
   responsePrefix?: string;
+  /** Action gates for message actions (edit, delete, member-info, etc.). */
+  actions?: MSTeamsActionConfig;
 };

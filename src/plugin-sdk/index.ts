@@ -130,6 +130,7 @@ export type {
   GoogleChatDmConfig,
   GoogleChatGroupConfig,
   GoogleChatActionConfig,
+  MSTeamsActionConfig,
   MSTeamsChannelConfig,
   MSTeamsConfig,
   MSTeamsReplyStyle,
