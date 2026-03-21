@@ -1,24 +1,29 @@
 import type { OpenClawConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { buildFileInfoCard, parseFileConsentInvoke, uploadToConsentUrl } from "./file-consent.js";
+import { normalizeMSTeamsConversationId } from "./inbound.js";
 import type { MSTeamsAdapter } from "./messenger.js";
 import { createMSTeamsMessageHandler } from "./monitor-handler/message-handler.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { getPendingUpload, removePendingUpload } from "./pending-uploads.js";
 import type { MSTeamsPollStore } from "./polls.js";
+import { getMSTeamsRuntime } from "./runtime.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
 
 export type MSTeamsAccessTokenProvider = {
   getAccessToken: (scope: string) => Promise<string>;
 };
 
+type ActivityHandlerFn = (context: unknown, next: () => Promise<void>) => Promise<void>;
+
 export type MSTeamsActivityHandler = {
-  onMessage: (
-    handler: (context: unknown, next: () => Promise<void>) => Promise<void>,
-  ) => MSTeamsActivityHandler;
-  onMembersAdded: (
-    handler: (context: unknown, next: () => Promise<void>) => Promise<void>,
-  ) => MSTeamsActivityHandler;
+  onMessage: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onMembersAdded: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onMembersRemoved: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onReactionsAdded: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onReactionsRemoved: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onConversationUpdate: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
+  onInstallationUpdate: (handler: ActivityHandlerFn) => MSTeamsActivityHandler;
   run?: (context: unknown) => Promise<void>;
 };
 
@@ -147,13 +152,175 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
     await next();
   });
 
+  // --- Activity event handlers (enqueue system events, no auto-reply) ---
+
+  const core = getMSTeamsRuntime();
+  const { cfg } = deps;
+
+  /** Resolve agent route from an activity's conversation context. */
+  const resolveRouteFromActivity = (activity: MSTeamsTurnContext["activity"]) => {
+    const conversation = activity.conversation;
+    const rawConversationId = conversation?.id ?? "";
+    const conversationId = normalizeMSTeamsConversationId(rawConversationId);
+    const conversationType = conversation?.conversationType ?? "personal";
+    const isGroupChat = conversationType === "groupChat" || conversation?.isGroup === true;
+    const isChannel = conversationType === "channel";
+    const isDirectMessage = !isGroupChat && !isChannel;
+    const senderId = activity.from?.aadObjectId ?? activity.from?.id ?? "";
+
+    const route = core.channel.routing.resolveAgentRoute({
+      cfg,
+      channel: "msteams",
+      peer: {
+        kind: isDirectMessage ? "direct" : isChannel ? "channel" : "group",
+        id: isDirectMessage ? senderId : conversationId,
+      },
+    });
+
+    return { route, conversationId, conversationType, isDirectMessage };
+  };
+
   handler.onMembersAdded(async (context, next) => {
-    const membersAdded = (context as MSTeamsTurnContext).activity?.membersAdded ?? [];
-    for (const member of membersAdded) {
-      if (member.id !== (context as MSTeamsTurnContext).activity?.recipient?.id) {
-        deps.log.debug?.("member added", { member: member.id });
-        // Don't send welcome message - let the user initiate conversation.
+    const activity = (context as MSTeamsTurnContext).activity;
+    const members = activity?.membersAdded ?? [];
+    for (const member of members) {
+      if (member.id === activity?.recipient?.id) continue; // skip bot itself
+      try {
+        const { route, conversationType } = resolveRouteFromActivity(activity);
+        const memberLabel = member.name ?? member.id;
+        core.system.enqueueSystemEvent(
+          `Teams member joined: ${memberLabel} in ${conversationType}`,
+          {
+            sessionKey: route.sessionKey,
+            contextKey: `msteams:member:added:${route.sessionKey}:${member.id}`,
+          },
+        );
+      } catch (err) {
+        deps.log.debug?.("failed to enqueue member added event", { error: String(err) });
       }
+    }
+    await next();
+  });
+
+  handler.onMembersRemoved(async (context, next) => {
+    const activity = (context as MSTeamsTurnContext).activity;
+    const members = activity?.membersRemoved ?? [];
+    for (const member of members) {
+      if (member.id === activity?.recipient?.id) continue; // skip bot itself
+      try {
+        const { route, conversationType } = resolveRouteFromActivity(activity);
+        const memberLabel = member.name ?? member.id;
+        core.system.enqueueSystemEvent(`Teams member left: ${memberLabel} in ${conversationType}`, {
+          sessionKey: route.sessionKey,
+          contextKey: `msteams:member:removed:${route.sessionKey}:${member.id}`,
+        });
+      } catch (err) {
+        deps.log.debug?.("failed to enqueue member removed event", { error: String(err) });
+      }
+    }
+    await next();
+  });
+
+  handler.onReactionsAdded(async (context, next) => {
+    const activity = (context as MSTeamsTurnContext).activity;
+    const reactions = activity?.reactionsAdded ?? [];
+    for (const reaction of reactions) {
+      try {
+        const { route, conversationType } = resolveRouteFromActivity(activity);
+        const senderLabel = activity.from?.name ?? activity.from?.id ?? "unknown";
+        core.system.enqueueSystemEvent(
+          `Teams reaction added: ${reaction.type} by ${senderLabel} in ${conversationType}`,
+          {
+            sessionKey: route.sessionKey,
+            contextKey: `msteams:reaction:added:${activity.replyToId ?? "unknown"}:${activity.from?.id ?? "unknown"}:${reaction.type}`,
+          },
+        );
+      } catch (err) {
+        deps.log.debug?.("failed to enqueue reaction added event", { error: String(err) });
+      }
+    }
+    await next();
+  });
+
+  handler.onReactionsRemoved(async (context, next) => {
+    const activity = (context as MSTeamsTurnContext).activity;
+    const reactions = activity?.reactionsRemoved ?? [];
+    for (const reaction of reactions) {
+      try {
+        const { route, conversationType } = resolveRouteFromActivity(activity);
+        const senderLabel = activity.from?.name ?? activity.from?.id ?? "unknown";
+        core.system.enqueueSystemEvent(
+          `Teams reaction removed: ${reaction.type} by ${senderLabel} in ${conversationType}`,
+          {
+            sessionKey: route.sessionKey,
+            contextKey: `msteams:reaction:removed:${activity.replyToId ?? "unknown"}:${activity.from?.id ?? "unknown"}:${reaction.type}`,
+          },
+        );
+      } catch (err) {
+        deps.log.debug?.("failed to enqueue reaction removed event", { error: String(err) });
+      }
+    }
+    await next();
+  });
+
+  handler.onConversationUpdate(async (context, next) => {
+    const activity = (context as MSTeamsTurnContext).activity;
+    const channelData = activity?.channelData as
+      | { eventType?: string; channel?: { name?: string }; team?: { name?: string } }
+      | undefined;
+    const eventType = channelData?.eventType;
+
+    // Channel/team lifecycle events sent via channelData.eventType
+    if (
+      eventType === "channelCreated" ||
+      eventType === "channelDeleted" ||
+      eventType === "channelRenamed" ||
+      eventType === "teamRenamed"
+    ) {
+      try {
+        const { route } = resolveRouteFromActivity(activity);
+        const channelName = channelData?.channel?.name ?? "unknown";
+        const teamName = channelData?.team?.name ?? "unknown";
+        let description: string;
+        switch (eventType) {
+          case "channelCreated":
+            description = `Teams channel created: ${channelName} in ${teamName}`;
+            break;
+          case "channelDeleted":
+            description = `Teams channel deleted: ${channelName} in ${teamName}`;
+            break;
+          case "channelRenamed":
+            description = `Teams channel renamed: ${channelName} in ${teamName}`;
+            break;
+          case "teamRenamed":
+            description = `Teams team renamed: ${teamName}`;
+            break;
+        }
+        core.system.enqueueSystemEvent(description, {
+          sessionKey: route.sessionKey,
+          contextKey: `msteams:conversation:${eventType}:${route.sessionKey}:${channelName}`,
+        });
+      } catch (err) {
+        deps.log.debug?.("failed to enqueue conversation update event", { error: String(err) });
+      }
+    }
+    await next();
+  });
+
+  handler.onInstallationUpdate(async (context, next) => {
+    const activity = (context as MSTeamsTurnContext).activity;
+    const action = (activity as unknown as { action?: string }).action ?? "unknown";
+    try {
+      const { route, conversationType } = resolveRouteFromActivity(activity);
+      core.system.enqueueSystemEvent(
+        `Teams bot ${action === "add" ? "installed" : action === "remove" ? "uninstalled" : action} in ${conversationType}`,
+        {
+          sessionKey: route.sessionKey,
+          contextKey: `msteams:installation:${action}:${route.sessionKey}`,
+        },
+      );
+    } catch (err) {
+      deps.log.debug?.("failed to enqueue installation update event", { error: String(err) });
     }
     await next();
   });
