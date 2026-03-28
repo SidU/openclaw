@@ -208,6 +208,64 @@ cannot write files as a non-owner sender.
 This lets the LLM explain to the user why the operation was denied,
 rather than failing silently.
 
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    subgraph Users["Inbound Messages"]
+        Owner["Owner / Manager\n(in ownerAllowFrom)"]
+        User["Regular User\n(in allowFrom)"]
+    end
+
+    subgraph Gateway["Gateway Process (host-side, tamper-proof)"]
+        Auth["Resolve senderIsOwner\n(command-auth.ts)"]
+        ToolExec["Tool Execution\n(pi-tools.ts)"]
+
+        subgraph FsBridge["fs-bridge Write Path"]
+            WriteAccess["ensureWriteAccess()\n(mount-level rw check)"]
+            OwnerGuard["ensureOwnerFilePermission()\n(NEW -- path + identity check)"]
+            PathSafety["pathGuard.assertPathSafety()\n(boundary + symlink check)"]
+        end
+    end
+
+    subgraph Sandbox["Docker Container / SSH Sandbox"]
+        Workspace["Agent Workspace\n(/workspace mount)"]
+        ProtectedFiles["Protected Files\nSOUL.md, AGENTS.md,\nIDENTITY.md, TOOLS.md"]
+        RegularFiles["Regular Files\nnotes.md, data/, etc."]
+    end
+
+    subgraph Runtime["Gateway Runtime (not mounted)"]
+        FsBridgeCode["fs-bridge.ts\ntool-policy.ts\nfs-safe.ts"]
+    end
+
+    Owner -->|"senderIsOwner = true"| Auth
+    User -->|"senderIsOwner = false"| Auth
+    Auth --> ToolExec
+    ToolExec -->|"write_file tool call"| WriteAccess
+    WriteAccess --> OwnerGuard
+    OwnerGuard -->|"Owner OR\nunprotected file"| PathSafety
+    OwnerGuard -->|"Non-owner +\nprotected file"| Denied["Error: restricted\nto agent owner"]
+    PathSafety -->|"docker exec / SSH"| Workspace
+    Workspace --- ProtectedFiles
+    Workspace --- RegularFiles
+
+    Denied -.->|"error returned to LLM"| ToolExec
+
+    Runtime ~~~ Sandbox
+
+    style OwnerGuard fill:#f59e0b,stroke:#d97706,color:#000
+    style Denied fill:#ef4444,stroke:#dc2626,color:#fff
+    style ProtectedFiles fill:#f59e0b,stroke:#d97706,color:#000
+    style Runtime fill:#6b7280,stroke:#4b5563,color:#fff
+    style Owner fill:#22c55e,stroke:#16a34a,color:#000
+    style User fill:#3b82f6,stroke:#2563eb,color:#fff
+```
+
+The key insight: the **gateway process** is the trust boundary. All three
+guards (write access, owner file permission, path safety) run host-side
+before any command crosses into the sandbox. The agent cannot modify the
+gateway runtime because it is not mounted into the container.
+
 ## Implementation Plan
 
 ### Phase 1: Config and types
