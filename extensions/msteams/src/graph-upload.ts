@@ -10,6 +10,7 @@
  */
 
 import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
+import { fetchWithTokenRetry } from "./token-retry.js";
 import { buildUserAgent } from "./user-agent.js";
 
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
@@ -34,19 +35,22 @@ export async function uploadToOneDrive(params: {
   fetchFn?: typeof fetch;
 }): Promise<OneDriveUploadResult> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
 
   // Use "OpenClawShared" folder to organize bot-uploaded files
   const uploadPath = `/OpenClawShared/${encodeURIComponent(params.filename)}`;
 
-  const res = await fetchFn(`${GRAPH_ROOT}/me/drive/root:${uploadPath}:/content`, {
-    method: "PUT",
-    headers: {
-      "User-Agent": buildUserAgent(),
-      Authorization: `Bearer ${token}`,
-      "Content-Type": params.contentType ?? "application/octet-stream",
-    },
-    body: new Uint8Array(params.buffer),
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${GRAPH_ROOT}/me/drive/root:${uploadPath}:/content`, {
+        method: "PUT",
+        headers: {
+          "User-Agent": buildUserAgent(),
+          Authorization: `Bearer ${token}`,
+          "Content-Type": params.contentType ?? "application/octet-stream",
+        },
+        body: new Uint8Array(params.buffer),
+      }),
   });
 
   if (!res.ok) {
@@ -87,19 +91,22 @@ export async function createSharingLink(params: {
   fetchFn?: typeof fetch;
 }): Promise<OneDriveSharingLink> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
 
-  const res = await fetchFn(`${GRAPH_ROOT}/me/drive/items/${params.itemId}/createLink`, {
-    method: "POST",
-    headers: {
-      "User-Agent": buildUserAgent(),
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      type: "view",
-      scope: params.scope ?? "organization",
-    }),
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${GRAPH_ROOT}/me/drive/items/${params.itemId}/createLink`, {
+        method: "POST",
+        headers: {
+          "User-Agent": buildUserAgent(),
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "view",
+          scope: params.scope ?? "organization",
+        }),
+      }),
   });
 
   if (!res.ok) {
@@ -179,23 +186,23 @@ export async function uploadToSharePoint(params: {
   fetchFn?: typeof fetch;
 }): Promise<OneDriveUploadResult> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
 
   // Use "OpenClawShared" folder to organize bot-uploaded files
   const uploadPath = `/OpenClawShared/${encodeURIComponent(params.filename)}`;
 
-  const res = await fetchFn(
-    `${GRAPH_ROOT}/sites/${params.siteId}/drive/root:${uploadPath}:/content`,
-    {
-      method: "PUT",
-      headers: {
-        "User-Agent": buildUserAgent(),
-        Authorization: `Bearer ${token}`,
-        "Content-Type": params.contentType ?? "application/octet-stream",
-      },
-      body: new Uint8Array(params.buffer),
-    },
-  );
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${GRAPH_ROOT}/sites/${params.siteId}/drive/root:${uploadPath}:/content`, {
+        method: "PUT",
+        headers: {
+          "User-Agent": buildUserAgent(),
+          Authorization: `Bearer ${token}`,
+          "Content-Type": params.contentType ?? "application/octet-stream",
+        },
+        body: new Uint8Array(params.buffer),
+      }),
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -251,12 +258,15 @@ export async function getDriveItemProperties(params: {
   fetchFn?: typeof fetch;
 }): Promise<DriveItemProperties> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
 
-  const res = await fetchFn(
-    `${GRAPH_ROOT}/sites/${params.siteId}/drive/items/${params.itemId}?$select=eTag,webDavUrl,name`,
-    { headers: { "User-Agent": buildUserAgent(), Authorization: `Bearer ${token}` } },
-  );
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(
+        `${GRAPH_ROOT}/sites/${params.siteId}/drive/items/${params.itemId}?$select=eTag,webDavUrl,name`,
+        { headers: { "User-Agent": buildUserAgent(), Authorization: `Bearer ${token}` } },
+      ),
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -309,7 +319,6 @@ export async function resolveGraphChatId(params: {
 
   // For personal DMs with non-Graph conversation IDs (e.g. `a:1xxx` or `8:orgid:xxx`),
   // query the bot's chats to find the matching one.
-  const token = await tokenProvider.getAccessToken(GRAPH_SCOPE);
 
   // Build filter: if we have the user's AAD object ID, narrow the search to 1:1 chats
   // with that member. Otherwise, fall back to listing all 1:1 chats.
@@ -326,8 +335,12 @@ export async function resolveGraphChatId(params: {
     path = `/me/chats?$filter=${encodeURIComponent("chatType eq 'oneOnOne'")}&$select=id`;
   }
 
-  const res = await fetchFn(`${GRAPH_ROOT}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const res = await fetchWithTokenRetry({
+    getToken: () => tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${GRAPH_ROOT}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
   });
 
   if (!res.ok) {
@@ -364,10 +377,13 @@ export async function getChatMembers(params: {
   fetchFn?: typeof fetch;
 }): Promise<ChatMember[]> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
 
-  const res = await fetchFn(`${GRAPH_ROOT}/chats/${params.chatId}/members`, {
-    headers: { "User-Agent": buildUserAgent(), Authorization: `Bearer ${token}` },
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${GRAPH_ROOT}/chats/${params.chatId}/members`, {
+        headers: { "User-Agent": buildUserAgent(), Authorization: `Bearer ${token}` },
+      }),
   });
 
   if (!res.ok) {
@@ -406,34 +422,34 @@ export async function createSharePointSharingLink(params: {
   fetchFn?: typeof fetch;
 }): Promise<OneDriveSharingLink> {
   const fetchFn = params.fetchFn ?? fetch;
-  const token = await params.tokenProvider.getAccessToken(GRAPH_SCOPE);
   const scope = params.scope ?? "organization";
 
   // Per-user sharing requires beta API
   const apiRoot = scope === "users" ? GRAPH_BETA : GRAPH_ROOT;
 
-  const body: Record<string, unknown> = {
+  const reqBody: Record<string, unknown> = {
     type: "view",
     scope: scope === "users" ? "users" : "organization",
   };
 
   // Add recipients for per-user sharing
   if (scope === "users" && params.recipientObjectIds?.length) {
-    body.recipients = params.recipientObjectIds.map((id) => ({ objectId: id }));
+    reqBody.recipients = params.recipientObjectIds.map((id) => ({ objectId: id }));
   }
 
-  const res = await fetchFn(
-    `${apiRoot}/sites/${params.siteId}/drive/items/${params.itemId}/createLink`,
-    {
-      method: "POST",
-      headers: {
-        "User-Agent": buildUserAgent(),
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    },
-  );
+  const res = await fetchWithTokenRetry({
+    getToken: () => params.tokenProvider.getAccessToken(GRAPH_SCOPE),
+    doFetch: (token) =>
+      fetchFn(`${apiRoot}/sites/${params.siteId}/drive/items/${params.itemId}/createLink`, {
+        method: "POST",
+        headers: {
+          "User-Agent": buildUserAgent(),
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reqBody),
+      }),
+  });
 
   if (!res.ok) {
     const respBody = await res.text().catch(() => "");

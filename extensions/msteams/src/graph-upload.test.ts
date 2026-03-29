@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { withFetchPreconnect } from "../../../test/helpers/extensions/fetch-mock.js";
 import { buildTeamsFileInfoCard } from "./graph-chat.js";
-import { resolveGraphChatId, uploadToOneDrive, uploadToSharePoint } from "./graph-upload.js";
+import {
+  createSharingLink,
+  getChatMembers,
+  getDriveItemProperties,
+  resolveGraphChatId,
+  uploadToOneDrive,
+  uploadToSharePoint,
+} from "./graph-upload.js";
 
 describe("graph upload helpers", () => {
   const tokenProvider = {
@@ -211,6 +218,196 @@ describe("resolveGraphChatId", () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe("token refresh on 401", () => {
+  it("uploadToOneDrive retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: "item-1", webUrl: "https://example.com/1", name: "a.txt" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const result = await uploadToOneDrive({
+      buffer: Buffer.from("hello"),
+      filename: "a.txt",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result.id).toBe("item-1");
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    // First call with stale token, second with fresh
+    expect(fetchFn.mock.calls[0]![1]!.headers).toEqual(
+      expect.objectContaining({ Authorization: "Bearer stale-token" }),
+    );
+    expect(fetchFn.mock.calls[1]![1]!.headers).toEqual(
+      expect.objectContaining({ Authorization: "Bearer fresh-token" }),
+    );
+  });
+
+  it("uploadToSharePoint retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: "item-2", webUrl: "https://example.com/2", name: "b.txt" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const result = await uploadToSharePoint({
+      buffer: Buffer.from("world"),
+      filename: "b.txt",
+      siteId: "site-123",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result.id).toBe("item-2");
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("createSharingLink retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ link: { webUrl: "https://share.example.com/link" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const result = await createSharingLink({
+      itemId: "item-1",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result.webUrl).toBe("https://share.example.com/link");
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolveGraphChatId retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ value: [{ id: "19:chat-id@thread.tacv2" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const result = await resolveGraphChatId({
+      botFrameworkConversationId: "a:1some_dm_id",
+      userAadObjectId: "some-user",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result).toBe("19:chat-id@thread.tacv2");
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("getChatMembers retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [{ userId: "user-1", displayName: "Alice" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const result = await getChatMembers({
+      chatId: "19:chat@thread.tacv2",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result).toEqual([{ aadObjectId: "user-1", displayName: "Alice" }]);
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("getDriveItemProperties retries with fresh token on 401", async () => {
+    const tokenProvider = {
+      getAccessToken: vi
+        .fn<(scope: string) => Promise<string>>()
+        .mockResolvedValueOnce("stale-token")
+        .mockResolvedValueOnce("fresh-token"),
+    };
+
+    const fetchFn = vi
+      .fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            eTag: '"abc,1"',
+            webDavUrl: "https://sp.example.com/file",
+            name: "f.txt",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const result = await getDriveItemProperties({
+      siteId: "site-1",
+      itemId: "item-1",
+      tokenProvider,
+      fetchFn: withFetchPreconnect(fetchFn),
+    });
+
+    expect(result.name).toBe("f.txt");
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
   });
 });
 

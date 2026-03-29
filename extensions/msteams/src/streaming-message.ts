@@ -225,6 +225,29 @@ export class TeamsHttpStream {
   }
 
   /**
+   * Try sending an activity, retrying once on 401 (expired token).
+   * The sendActivity callback fetches a fresh token on each call via the
+   * SDK Client's token provider, so a retry naturally uses a new token.
+   */
+  private async trySendWithRetry(
+    activity: Record<string, unknown>,
+  ): Promise<{ id?: string } | unknown> {
+    try {
+      return await this.sendActivity(activity);
+    } catch (err) {
+      const statusCode =
+        (err as { response?: { status?: number } })?.response?.status ??
+        (err as { statusCode?: number })?.statusCode;
+      if (statusCode !== 401) {
+        throw err;
+      }
+      // Retry once — the SDK Client re-invokes getToken() which asks MSAL for
+      // a fresh token now that the previous one has been recognized as expired.
+      return await this.sendActivity(activity);
+    }
+  }
+
+  /**
    * Send a single streaming chunk as a typing activity with streaminfo.
    * Per the Teams REST API spec:
    * - First chunk: no streamId, streamSequence=1 → returns 201 with { id: streamId }
@@ -244,7 +267,7 @@ export class TeamsHttpStream {
     };
 
     try {
-      const response = await this.sendActivity(activity);
+      const response = await this.trySendWithRetry(activity);
       if (!this.streamId) {
         this.streamId = extractId(response);
       }

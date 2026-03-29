@@ -71,6 +71,49 @@ describe("TeamsHttpStream", () => {
     );
   });
 
+  it("retries stream chunk once on 401 error (expired token)", async () => {
+    let callCount = 0;
+    const sendActivity = vi.fn(async (activity) => {
+      callCount++;
+      if (callCount === 1) {
+        throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+      }
+      return { id: "stream-1" };
+    });
+    const errors: unknown[] = [];
+    const stream = new TeamsHttpStream({
+      sendActivity,
+      onError: (err) => errors.push(err),
+    });
+
+    stream.update("Hello, this is a long enough response for streaming test purposes.");
+    await new Promise((r) => setTimeout(r, 1700));
+
+    // The first call fails with 401, stream retries, second call succeeds
+    expect(sendActivity.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(errors).toHaveLength(0);
+    expect(stream.hasContent).toBe(true);
+  });
+
+  it("marks stream failed after 401 retry also fails", async () => {
+    const sendActivity = vi.fn(async () => {
+      throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+    });
+    const errors: unknown[] = [];
+    const stream = new TeamsHttpStream({
+      sendActivity,
+      onError: (err) => errors.push(err),
+    });
+
+    stream.update("Hello, this is a long enough response for streaming test purposes.");
+    await new Promise((r) => setTimeout(r, 1700));
+
+    // Both calls fail — stream should be marked failed
+    expect(sendActivity.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(stream.hasContent).toBe(false);
+  });
+
   it("does not send below MIN_INITIAL_CHARS", async () => {
     const sendActivity = vi.fn(async () => ({ id: "x" }));
     const stream = new TeamsHttpStream({ sendActivity });
