@@ -175,7 +175,7 @@ function createSendContext(params: {
         conversationId: params.conversationId,
         activityId,
         activity: nextActivity,
-        token: await params.getToken(),
+        getToken: params.getToken,
       });
     },
 
@@ -190,7 +190,7 @@ function createSendContext(params: {
         serviceUrl: params.serviceUrl,
         conversationId: params.conversationId,
         activityId,
-        token: await params.getToken(),
+        getToken: params.getToken,
       });
     },
   };
@@ -248,29 +248,30 @@ async function updateActivityViaRest(params: {
   conversationId: string;
   activityId: string;
   activity: Record<string, unknown>;
-  token?: string;
+  getToken: () => Promise<string | undefined>;
 }): Promise<{ id?: string }> {
-  const { serviceUrl, conversationId, activityId, activity, token } = params;
+  const { serviceUrl, conversationId, activityId, activity, getToken } = params;
   const baseUrl = serviceUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/v3/conversations/${encodeURIComponent(conversationId)}/activities/${encodeURIComponent(activityId)}`;
+  const payload = JSON.stringify({ type: "message", ...activity, id: activityId });
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "User-Agent": buildUserAgent(),
+  const doFetch = async (token: string | undefined) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "User-Agent": buildUserAgent(),
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return await fetch(url, { method: "PUT", headers, body: payload });
   };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
 
-  const response = await fetch(url, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify({
-      type: "message",
-      ...activity,
-      id: activityId,
-    }),
-  });
+  let response = await doFetch(await getToken());
+
+  // Retry once on 401 with a fresh token (stale token from MSAL cache)
+  if (response.status === 401) {
+    response = await doFetch(await getToken());
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -290,23 +291,28 @@ async function deleteActivityViaRest(params: {
   serviceUrl: string;
   conversationId: string;
   activityId: string;
-  token?: string;
+  getToken: () => Promise<string | undefined>;
 }): Promise<void> {
-  const { serviceUrl, conversationId, activityId, token } = params;
+  const { serviceUrl, conversationId, activityId, getToken } = params;
   const baseUrl = serviceUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/v3/conversations/${encodeURIComponent(conversationId)}/activities/${encodeURIComponent(activityId)}`;
 
-  const headers: Record<string, string> = {
-    "User-Agent": buildUserAgent(),
+  const doFetch = async (token: string | undefined) => {
+    const headers: Record<string, string> = {
+      "User-Agent": buildUserAgent(),
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return await fetch(url, { method: "DELETE", headers });
   };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
 
-  const response = await fetch(url, {
-    method: "DELETE",
-    headers,
-  });
+  let response = await doFetch(await getToken());
+
+  // Retry once on 401 with a fresh token (stale token from MSAL cache)
+  if (response.status === 401) {
+    response = await doFetch(await getToken());
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
