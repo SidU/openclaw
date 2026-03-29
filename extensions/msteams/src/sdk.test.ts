@@ -39,13 +39,15 @@ function createSdkStub(): MSTeamsTeamsSdk {
 describe("createMSTeamsAdapter", () => {
   it("retries deleteActivity with fresh token on 401", async () => {
     let callCount = 0;
-    const fetchMock = vi.fn(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-      return new Response(null, { status: 204 });
-    });
+    const fetchMock = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>(
+      async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        return new Response(null, { status: 204 });
+      },
+    );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const sdk = createSdkStub();
@@ -76,16 +78,18 @@ describe("createMSTeamsAdapter", () => {
 
   it("retries updateActivity with fresh token on 401", async () => {
     let callCount = 0;
-    const fetchMock = vi.fn(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-      return new Response(JSON.stringify({ id: "activity-789" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
+    const fetchMock = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>(
+      async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        return new Response(JSON.stringify({ id: "activity-789" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const sdk = createSdkStub();

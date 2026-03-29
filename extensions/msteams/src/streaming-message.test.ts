@@ -93,6 +93,8 @@ describe("TeamsHttpStream", () => {
     expect(sendActivity.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(errors).toHaveLength(0);
     expect(stream.hasContent).toBe(true);
+
+    await stream.finalize();
   });
 
   it("marks stream failed after 401 retry also fails", async () => {
@@ -112,6 +114,8 @@ describe("TeamsHttpStream", () => {
     expect(sendActivity.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(stream.hasContent).toBe(false);
+
+    await stream.finalize();
   });
 
   it("does not send below MIN_INITIAL_CHARS", async () => {

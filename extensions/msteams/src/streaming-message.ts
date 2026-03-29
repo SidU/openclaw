@@ -109,7 +109,7 @@ export class TeamsHttpStream {
     };
 
     try {
-      const response = await this.sendActivity(activity);
+      const response = await this.trySendWithRetry(activity);
       if (!this.streamId) {
         this.streamId = extractId(response);
       }
@@ -229,9 +229,7 @@ export class TeamsHttpStream {
    * The sendActivity callback fetches a fresh token on each call via the
    * SDK Client's token provider, so a retry naturally uses a new token.
    */
-  private async trySendWithRetry(
-    activity: Record<string, unknown>,
-  ): Promise<{ id?: string } | unknown> {
+  private async trySendWithRetry(activity: Record<string, unknown>): Promise<unknown> {
     try {
       return await this.sendActivity(activity);
     } catch (err) {
